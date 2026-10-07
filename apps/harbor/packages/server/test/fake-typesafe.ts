@@ -23,6 +23,8 @@ export class FakeTypeSafe {
   judge: Judge = namesThem;
   /** The next responses' statuses, before it answers normally again. */
   failWith: number[] = [];
+  /** When set, a request is recorded and then answered only once this settles: a model that takes its time. */
+  hold: Promise<void> | undefined;
   private server!: Server;
   url = '';
 
@@ -30,13 +32,14 @@ export class FakeTypeSafe {
     this.server = createServer((req, res) => {
       let raw = '';
       req.on('data', (c) => (raw += c));
-      req.on('end', () => {
+      req.on('end', async () => {
         if (req.method !== 'POST' || req.url !== '/v1/systemone') return void res.writeHead(404).end();
         const status = this.failWith.shift();
         if (status) return void res.writeHead(status).end('{"error":"nope"}');
         const body = JSON.parse(raw) as Omit<SystemOneCall, 'auth'>;
         const call: SystemOneCall = { ...body, auth: req.headers.authorization };
         this.calls.push(call);
+        await this.hold;
         const answers: Record<string, { type: 'noul'; noul: number }> = {};
         for (const member of call.state.members) answers[member.id] = { type: 'noul', noul: this.judge(call, member) };
         res.writeHead(200, { 'content-type': 'application/json' });

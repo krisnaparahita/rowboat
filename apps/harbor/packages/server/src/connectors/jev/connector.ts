@@ -177,7 +177,7 @@ export class JevConnector implements RunningConnector {
     const input = {
       spaceName: space.name,
       message: { authorId: message.author.memberId, text: mentionsAsText(message.body, names) },
-      thread: thread.map((m) => ({ authorId: m.author.memberId, text: mentionsAsText(m.body, names) })),
+      thread: thread.map((m) => ({ authorId: m.author.memberId, text: mentionsAsText(m.body, names), mentions: m.mentions })),
       members,
       jevId: agent.id,
       mentioned: message.mentions,
@@ -196,10 +196,27 @@ export class JevConnector implements RunningConnector {
       this.env.log(`Jev could not judge message ${message.id}: ${(err as Error).message}`);
       return err instanceof TypeSafeError && err.transient ? 'retry' : 'done';
     }
-    const tags = decideTags(answers, candidates);
+    const tags = await this.notTaggedSince(message, threadRootId, decideTags(answers, candidates));
     if (tags.length === 0) return 'done';
     await service.relayMentions(ctx, spaceId, message.id, `cc ${tags.map(token).join(' ')}`);
     return 'done';
+  }
+
+  /**
+   * The tags still worth posting once Jev has answered (2026-10-07, Arjun in
+   * Spaces). Jev takes seconds, and in that time someone may tag the member
+   * themselves (a "^^" right after the message) or the agent may have started
+   * on the thread. Tagging them then would be a second tag.
+   */
+  private async notTaggedSince(message: Message, threadRootId: string, tags: Member[]): Promise<Member[]> {
+    if (tags.length === 0) return tags;
+    const { ctx, service } = this.env;
+    const since = await service.listThread(ctx, message.spaceId, threadRootId, { afterOffset: message.offset, limit: 200 });
+    const tagged = new Set(since.messages.filter((m) => !m.deletedAt).flatMap((m) => m.mentions));
+    const busy = new Set(
+      (await service.listInvocations(ctx, message.spaceId, threadRootId)).filter((i) => LIVE_STATES.has(i.state)).map((i) => i.agentId),
+    );
+    return tags.filter((m) => !tagged.has(m.id) && !(m.kind === 'agent' && busy.has(m.id)));
   }
 
   private async safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {

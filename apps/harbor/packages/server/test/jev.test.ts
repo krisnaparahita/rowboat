@@ -150,6 +150,20 @@ describe('Jev', () => {
     expect(await jevReplies(already.id)).toEqual([]);
   });
 
+  it('drops a tag someone wrote while Jev was judging', async () => {
+    let release!: () => void;
+    fake.hold = new Promise((r) => (release = r));
+    const calls = fake.calls.length;
+    const root = await post('Gagan, the staging deploy is red');
+    await until(async () => fake.calls.length > calls, 'Jev asked');
+    await post('[@Gagan](#member:gagan) ^^', 'dev-ramnique', { threadRoot: root.id });
+    fake.hold = undefined;
+    release();
+    await until(async () => fake.calls.length > calls + 1, 'the follow-up judged');
+    await settle();
+    expect(await jevReplies(root.id)).toEqual([]);
+  });
+
   it('reads replies with their thread, and never reads its own posts', async () => {
     const root = await post('Who owns the refund flow?');
     await settle();
@@ -252,6 +266,11 @@ describe('Jev’s questions', () => {
     expect(selectCandidates(input({ agentsAllowed: false })).map((m) => m.id)).toEqual(['h', 'g']);
     expect(selectCandidates(input({ busyAgents: new Set(['c']) })).map((m) => m.id)).toEqual(['h', 'g']);
     expect(selectCandidates(input({ here: true })).map((m) => m.id)).toEqual(['c']);
+  });
+
+  it('leaves out a person tagged earlier in the thread, but not an agent, which does not follow it', () => {
+    const thread = [{ authorId: 'j', text: 'cc @Harsh @Claude', mentions: ['h', 'c'] }];
+    expect(selectCandidates(input({ thread })).map((m) => m.id)).toEqual(['c', 'g']);
   });
 
   it('describes agents by what they are, and maps answers back over the bar, at most three', () => {

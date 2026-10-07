@@ -31,8 +31,8 @@ export interface TagInput {
   spaceName: string;
   /** The message, its tokens written as plain "@Name" text. */
   message: { authorId: string; text: string };
-  /** The thread before it, oldest first, the same way; empty for a new message in the stream. */
-  thread: Array<{ authorId: string; text: string }>;
+  /** The thread before it, oldest first, the same way, with who each message tags; empty for a new message in the stream. */
+  thread: Array<{ authorId: string; text: string; mentions: readonly string[] }>;
   /** The space's members. */
   members: readonly Member[];
   jevId: string;
@@ -60,15 +60,20 @@ function names(text: string, name: string): boolean {
  * The members Jev is asked about, strongest first: those the message names,
  * then those who wrote in the thread, then the rest. Never the author, Jev,
  * anyone already tagged, an agent already at work in the thread, an agent
- * past the hop limit, or a person when @here already reached everyone.
+ * past the hop limit, a person already tagged earlier in the thread, or a
+ * person when @here already reached everyone.
  */
 export function selectCandidates(input: TagInput): Member[] {
   const tagged = new Set(input.mentioned);
   const wrote = new Set(input.thread.map((m) => m.authorId));
+  // A person tagged earlier in the thread follows it and hears every reply,
+  // so a second tag is noise (2026-10-07, Arjun in Spaces). An agent does not
+  // follow, so a follow-up meant for it still needs one.
+  const taggedInThread = new Set(input.thread.flatMap((m) => m.mentions));
   const eligible = input.members.filter((m) => {
     if (m.id === input.message.authorId || m.id === input.jevId || tagged.has(m.id)) return false;
     if (m.kind === 'agent') return input.agentsAllowed && !input.busyAgents.has(m.id);
-    return !input.here;
+    return !input.here && !taggedInThread.has(m.id);
   });
   const rank = (m: Member) => (names(input.message.text, m.displayName) ? 0 : wrote.has(m.id) ? 1 : 2);
   return eligible
